@@ -159,10 +159,43 @@ if(libserialport_ADDED)
     set(LSER ${CMAKE_CURRENT_BINARY_DIR}/libserialport_b)
     file(COPY ${libserialport_SOURCE_DIR}/ DESTINATION ${LSER})
 
-    add_custom_command(OUTPUT ${LSER}/config.h ${LSER}/libserialport.h
+    if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+        include(CheckSymbolExists)
+        include(CheckTypeSize)
+        check_symbol_exists(BOTHER "linux/termios.h" HAVE_DECL_BOTHER)
+        set(CMAKE_EXTRA_INCLUDE_FILES linux/serial.h)
+        check_type_size("struct serial_struct" STRUCT_SERIAL_STRUCT LANGUAGE C)
+        set(CMAKE_EXTRA_INCLUDE_FILES linux/termios.h)
+        check_type_size("struct termios2" STRUCT_TERMIOS2 LANGUAGE C)
+        check_type_size("((struct termios2*)0)->c_ispeed" STRUCT_TERMIOS2_C_ISPEED LANGUAGE C)
+        check_type_size("((struct termios2*)0)->c_ospeed" STRUCT_TERMIOS2_C_OSPEED LANGUAGE C)
+        check_type_size("((struct termios*)0)->c_ispeed" STRUCT_TERMIOS_C_ISPEED LANGUAGE C)
+        check_type_size("((struct termios*)0)->c_ospeed" STRUCT_TERMIOS_C_OSPEED LANGUAGE C)
+        check_type_size("struct termiox" STRUCT_TERMIOX LANGUAGE C)
+        set(CMAKE_EXTRA_INCLUDE_FILES)
+
+    elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+    elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    endif()
+
+    set(SP_PACKAGE_VERSION_MAJOR "0")
+    set(SP_PACKAGE_VERSION_MINOR 1)
+    set(SP_PACKAGE_VERSION_MICRO 1)
+    set(SP_PACKAGE_VERSION_STRING "${SP_PACKAGE_VERSION_MAJOR}.${SP_PACKAGE_VERSION_MINOR}.${SP_PACKAGE_VERSION_MICRO}")
+    set(SP_LIB_VERSION_CURRENT 1)
+    set(SP_LIB_VERSION_REVISION 0)
+    set(SP_LIB_VERSION_AGE 1)
+    set(SP_LIB_VERSION_STRING "${SP_LIB_VERSION_CURRENT}:${SP_LIB_VERSION_REVISION}:${SP_LIB_VERSION_AGE}")
+
+    configure_file(my_libserialport/config.h.in ${LSER}/config.h @ONLY)
+    configure_file(my_libserialport/libserialport.h.in ${LSER}/libserialport.h @ONLY)
+
+#[[    add_custom_command(OUTPUT ${LSER}/config.h ${LSER}/libserialport.h
         COMMAND ${LSER}/configure
         WORKING_DIRECTORY ${LSER}
         )
+]]
+
 
     add_library(serialport STATIC
         ${LSER}/config.h
@@ -170,6 +203,8 @@ if(libserialport_ADDED)
         ${LSER}/libserialport.h
         )
     target_include_directories(serialport PUBLIC ${LSER})
+
+
 
     if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
         target_sources(serialport PUBLIC ${LSER}/linux.c ${LSER}/linux_termios.c)

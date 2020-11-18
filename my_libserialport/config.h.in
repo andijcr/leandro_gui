@@ -1,0 +1,61 @@
+/* Define to 1 if you have the declaration of `BOTHER', and to 0 if you don't.
+   */
+#cmakedefine HAVE_DECL_BOTHER
+
+/* Define to 1 if the system has the type `struct serial_struct'. */
+#cmakedefine HAVE_STRUCT_SERIAL_STRUCT
+
+/* Define to 1 if the system has the type `struct termios2'. */
+#cmakedefine HAVE_STRUCT_TERMIOS2
+
+/* Define to 1 if `c_ispeed' is a member of `struct termios2'. */
+#cmakedefine HAVE_STRUCT_TERMIOS2_C_ISPEED
+
+/* Define to 1 if `c_ospeed' is a member of `struct termios2'. */
+#cmakedefine HAVE_STRUCT_TERMIOS2_C_OSPEED
+
+/* Define to 1 if `c_ispeed' is a member of `struct termios'. */
+#cmakedefine HAVE_STRUCT_TERMIOS_C_ISPEED
+
+/* Define to 1 if `c_ospeed' is a member of `struct termios'. */
+#cmakedefine HAVE_STRUCT_TERMIOS_C_OSPEED
+
+/* Define to 1 if the system has the type `struct termiox'. */
+#cmakedefine HAVE_STRUCT_TERMIOX
+
+/* Macro preceding public API functions */
+#define SP_API
+
+/* . */
+#define SP_LIB_VERSION_AGE @SP_LIB_VERSION_AGE@
+
+/* . */
+#define SP_LIB_VERSION_CURRENT @SP_LIB_VERSION_CURRENT@
+
+/* . */
+#define SP_LIB_VERSION_REVISION @SP_LIB_VERSION_REVISION@
+
+/* . */
+#define SP_LIB_VERSION_STRING "@SP_LIB_VERSION_STRING@"
+
+/* . */
+#define SP_PACKAGE_VERSION_MAJOR @SP_PACKAGE_VERSION_MAJOR@
+
+/* . */
+#define SP_PACKAGE_VERSION_MICRO @SP_PACKAGE_VERSION_MICRO@
+
+/* . */
+#define SP_PACKAGE_VERSION_MINOR @SP_PACKAGE_VERSION_MINOR@
+
+/* . */
+#define SP_PACKAGE_VERSION_STRING "@SP_PACKAGE_VERSION_STRING@"
+
+/* Macro preceding private functions */
+#define SP_PRIV
+
+#if defined(HAVE_STRUCT_TERMIOS_C_ISPEED) && defined(HAVE_STRUCT_TERMIOS_C_OSPEED)
+#define HAVE_TERMIOS_SPEED 1
+#endif
+#if defined(HAVE_STRUCT_TERMIOS2_C_ISPEED) && defined(HAVE_STRUCT_TERMIOS2_C_OSPEED)
+#define HAVE_TERMIOS2_SPEED 1
+#endif
