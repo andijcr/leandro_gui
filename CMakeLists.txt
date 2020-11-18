@@ -190,20 +190,12 @@ if(libserialport_ADDED)
     configure_file(my_libserialport/config.h.in ${LSER}/config.h @ONLY)
     configure_file(my_libserialport/libserialport.h.in ${LSER}/libserialport.h @ONLY)
 
-#[[    add_custom_command(OUTPUT ${LSER}/config.h ${LSER}/libserialport.h
-        COMMAND ${LSER}/configure
-        WORKING_DIRECTORY ${LSER}
-        )
-]]
-
-
     add_library(serialport STATIC
         ${LSER}/config.h
         ${LSER}/serialport.c
         ${LSER}/libserialport.h
         )
     target_include_directories(serialport PUBLIC ${LSER})
-
 
 
     if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
