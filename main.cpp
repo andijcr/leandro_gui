@@ -462,6 +462,7 @@ int main() {
 		return 1;
 	}
 
+	// this should be the minimum version supported everywhere
 	constexpr auto glsl_version = "#version 130";
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
