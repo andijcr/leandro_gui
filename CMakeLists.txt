@@ -67,6 +67,10 @@ endif()
 add_library(glad STATIC glade/src/glad.c)
 target_include_directories(glad PUBLIC glade/include)
 
+
+set(GLFW_BUILD_DOCS OFF)
+set(GLFW_BUILD_EXAMPLES OFF)
+set(GLFW_BUILD_TESTS OFF)
 CPMAddPackage(
     NAME glfw
     GITHUB_REPOSITORY glfw/glfw
@@ -96,15 +100,6 @@ if(imgui_ADDED)
         )
     target_include_directories(imgui PUBLIC ${IMGUI_DIR})
     target_link_libraries(imgui PUBLIC project_options)
-
-    add_library(imgui_sdlopengl STATIC
-        ${IMGUI_DIR}/examples/imgui_impl_opengl3.cpp
-        ${IMGUI_DIR}/examples/imgui_impl_opengl3.h
-        ${IMGUI_DIR}/examples/imgui_impl_sdl.cpp
-        ${IMGUI_DIR}/examples/imgui_impl_sdl.h
-        )
-    target_link_libraries(imgui_sdlopengl PUBLIC imgui glad SDL2-static project_options)
-    target_include_directories(imgui_sdlopengl PUBLIC ${IMGUI_DIR}/examples)
 
     add_library(imgui_glfwopengl STATIC
         ${IMGUI_DIR}/examples/imgui_impl_opengl3.cpp
