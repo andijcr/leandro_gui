@@ -15,12 +15,20 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <exception>
 #include <limits>
 #include <memory>
+#include <numbers>
 #include <queue>
 #include <random>
 #include <ranges>
+#include <span>
+#include <variant>
+
+#include "gps.hpp"
+#include "imu.hpp"
+#include "leo_widgets.hpp"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wuseless-cast"
@@ -139,10 +147,21 @@ struct port {
 
 struct open_port {
 	sp_port_p p;
+
+	auto name() const noexcept -> std::string {
+		const auto res = sp_get_port_name(p.get());
+		return res ? res : "";
+	}
+	auto description() const noexcept -> std::string {
+		const auto res = sp_get_port_description(p.get());
+		return res ? res : "";
+	}
+
 	auto set_config(const config &cfg) -> open_port & {
 		wrap(sp_set_config(p.get(), cfg));
 		return *this;
 	}
+
 	auto get_config() const noexcept -> config {
 		struct config c {};
 		wrap(sp_get_config(p.get(), c));
@@ -186,143 +205,66 @@ auto get_ports() -> std::vector<port> {
 	return res;
 }
 
-struct line_spliter {
+struct line_getter {
 	std::string rest{};
+	size_t check_from = 0;
 	open_port p;
-	line_spliter(open_port op) : p{std::move(op)} {}
-	auto operator()(std::queue<std::string> &out) {
-		const auto in_count = size_t(wrap(sp_input_waiting(p)));
-		if (in_count == 0) {
-			return;
+	line_getter(open_port op) : p{std::move(op)} {}
+	auto operator()() -> std::optional<std::string> {
+		// find a line inside
+		auto nl = rest.find('\n', check_from);
+		if (nl != rest.npos) {
+			auto line = rest.substr(0, nl);
+			rest.erase(0, nl + 1);
+			check_from = 0;
+			return line;
 		}
+		check_from = rest.size();
 
-		auto buff = std::vector<char>(in_count, 0);
-		wrap(sp_nonblocking_read(p, buff.data(), in_count));
-
-		const auto separators = std::ranges::count(buff, '\n');
-		if (separators == 0) {
-			// no complete line, save and drop
-			std::ranges::copy(buff, std::back_inserter(rest));
-			spdlog::debug("noline");
-			return;
+		// try to pull
+		if (const auto in_count = size_t(wrap(sp_input_waiting(p)));
+			in_count > 0) {
+			spdlog::debug(FMT_COMPILE("pulling {} bytes from {}"), in_count,
+						  p.name());
+			// reserve space inside the string
+			rest.append(in_count, 0);
+			// and append directly there (tanks to the fact that the old size is
+			// in check_from - not the best
+			wrap(sp_nonblocking_read(p, rest.data() + check_from, in_count));
 		}
-
-		auto last_partial = [&] {
-			auto tmp =
-				buff | std::views::reverse |
-				std::views::take_while([](auto c) { return c != '\n'; }) |
-				std::views::reverse | std::views::common;
-
-			return std::string(tmp.begin(), tmp.end());
-		}();
-
-		buff.erase(buff.end() - ptrdiff_t(last_partial.size()) - 1, buff.end());
-
-		std::ranges::copy(
-			buff | std::views::take_while([](auto c) { return c != '\n'; }),
-			std::back_inserter(rest));
-		out.emplace(std::exchange(rest, std::move(last_partial)));
-
-		const auto line_list = buff | std::views::split('\n');
-		for (auto line : line_list | std::views::drop(1)) {
-			const auto tmp = line | std::views::common;
-			out.emplace(tmp.begin(), tmp.end());
-		}
-
-		spdlog::debug(FMT_COMPILE("received {} full and {} partial"),
-					  separators, rest.size() == 0 ? 0 : 1);
+		return {};
 	}
 };
 
-struct imu {
-	uint32_t ts{};
-	std::array<int16_t, 3> acc{};
-	std::array<int16_t, 3> gyro{};
-};
-
-auto isimu_num(std::string_view sv) {
-	auto ltrim = sv | std::views::drop_while(isspace);
-	auto to_skip = ltrim.front() == '-' ? 1 : 0;
-	return std::ranges::all_of(ltrim.begin() + to_skip, ltrim.end(), isdigit);
-}
-
-auto is_imu(std::string_view sv) {
-	if (std::ranges::count(sv, ';') != 7) {
-		return false;
+struct data_source {
+	line_getter get;
+	auto operator()() -> std::optional<std::variant<imu, gps_hybrid>> {
+		const auto line = get();
+		if (!line) {
+			return {};
+		}
+		if (is_imu(*line)) {
+			return to_imu(*line);
+		}
+		if (is_gps_hybrid(*line)) {
+			return to_gps_hybrid(*line);
+		}
+		spdlog::debug(R"(unhandled: "{}")", *line);
+		return {};
 	}
-
-	auto colums =
-		sv | std::views::split(';') | std::views::transform([](auto &&rng) {
-			return std::string_view(&*rng.begin(),
-									size_t(std::ranges::distance(rng)));
-		});
-	if (colums.front() != "imu") {
-		return false;
-	}
-
-	auto nums = colums.begin();
-	++nums;
-	return std::ranges::all_of(nums, colums.end(), isimu_num);
-}
-
-auto to_imu(std::string_view sv) {
-	auto colums =
-		sv | std::views::split(';') | std::views::transform([](auto &&rng) {
-			return std::string_view(&*rng.begin(),
-									size_t(std::ranges::distance(rng)));
-		});
-
-	auto nums =
-		colums | std::views::drop(1) | std::views::transform([](auto strnum) {
-			int64_t res;
-			std::from_chars(strnum.begin(), strnum.end(), res);
-			return res;
-		});
-
-	auto it = nums.begin();
-	auto ts = *it;
-	++it;
-	auto ax = *it;
-	++it;
-	auto ay = *it;
-	++it;
-	auto az = *it;
-	++it;
-	auto gx = *it;
-	++it;
-	auto gy = *it;
-	++it;
-	auto gz = *it;
-	return imu{uint32_t(ts),
-			   {int16_t(ax), int16_t(ay), int16_t(az)},
-			   {int16_t(gy), int16_t(gx), int16_t(gz)}};
-}
-
-template <typename T> struct decompose;
-
-template <typename Ret, typename T, typename Arg>
-struct decompose<Ret (T::*)(Arg) const> {
-	using arg = std::remove_cvref_t<Arg>;
 };
-
-auto getter(auto f) {
-	return [](void *data, int idx) {
-		using U = typename decompose<decltype(&decltype(f)::operator())>::arg;
-		auto dataT = static_cast<const U *>(data);
-		return std::invoke(decltype(f){}, dataT[idx]);
-	};
-}
 
 static const auto app_start = std::chrono::system_clock::now();
 uint64_t get_ms() {
 	auto d = std::chrono::system_clock::now() - app_start;
-	return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+	return uint64_t(
+		std::chrono::duration_cast<std::chrono::milliseconds>(d).count());
 }
 
 struct lclock {
 	struct Time {
 		uint64_t ms;
-		auto asSeconds() -> float { return ms / 1000.f; }
+		auto asSeconds() -> float { return float(ms) / 1000.f; }
 	};
 
 	uint64_t start;
@@ -331,7 +273,20 @@ struct lclock {
 	void restart() { start = get_ms(); }
 };
 
+constexpr auto to_degs_per_sec(int16_t gyr_point, float fullscale) {
+	return fullscale * float(gyr_point) /
+		   -float(std::numeric_limits<int16_t>::min());
+}
+constexpr auto to_increment(float degs_per_sec, uint32_t ms) {
+	return degs_per_sec * (float(ms) / 1000.f);
+}
+
+constexpr auto to_radians(float degs) {
+	return (degs / 180.f) * std::numbers::pi_v<float>;
+}
+
 struct sample_data {
+	std::string label = "sample_data";
 	lclock test_data_clock{};
 	std::vector<imu> test_data{1, imu{}};
 	std::default_random_engine random_engine{std::random_device{}()};
@@ -341,6 +296,8 @@ struct sample_data {
 	std::uniform_int_distribution<int> attractor_random{-5000, 5000};
 	std::pair<std::array<int16_t, 3>, std::array<int16_t, 3>> attractor{};
 	lclock attractor_clock{};
+
+	std::array<float, 3> dir{};
 
 	void update() {
 		if (attractor_clock.getElapsedTime().asSeconds() > 3.f) {
@@ -352,107 +309,144 @@ struct sample_data {
 				a = int16_t(attractor_random(random_engine));
 			}
 		}
-		if (const auto to_add =
-				[&] {
-					const auto expected = std::floor(
-						test_data_clock.getElapsedTime().asSeconds() /
-						0.016891892f);
-					return int(expected - float(test_data.size()));
-				}();
-			to_add > 0) {
-
-			auto new_data_gen = [&, back = test_data.back()]() mutable {
-				auto zero_attractor = [&](int v, int tgt) {
-					return int16_t(std::clamp<int>(
-						v + (tgt - v) * random_acc(random_engine) +
-							random_acc(random_engine),
-						std::numeric_limits<int16_t>::min(),
-						std::numeric_limits<int16_t>::max()));
-				};
-
-				back = imu{
-					back.ts += uint32_t(16 + random_ts(random_engine)),
-					{
-						zero_attractor(back.acc[0], attractor.first[0]),
-						zero_attractor(back.acc[1], attractor.first[1]),
-						zero_attractor(back.acc[2], attractor.first[2]),
-					},
-					{
-						zero_attractor(back.gyro[0], attractor.second[0]),
-						zero_attractor(back.gyro[1], attractor.second[1]),
-						zero_attractor(back.gyro[2], attractor.second[2]),
-					},
-				};
-				return back;
-			};
-			for (auto i = 0; i < to_add; ++i) {
-				test_data.emplace_back(new_data_gen());
-			}
+		const auto to_add = [&] {
+			const auto expected = std::floor(
+				test_data_clock.getElapsedTime().asSeconds() / 0.016891892f);
+			return int(expected - float(test_data.size()));
+		}();
+		if (to_add <= 0) {
+			return;
 		}
-	}
+		auto new_data_gen = [&, back = test_data.back()]() mutable {
+			auto zero_attractor = [&](int v, int tgt) {
+				return int16_t(
+					std::clamp<int>(v + (tgt - v) * random_acc(random_engine) +
+										random_acc(random_engine),
+									std::numeric_limits<int16_t>::min(),
+									std::numeric_limits<int16_t>::max()));
+			};
 
-	bool sample_data = true;
+			back = imu{
+				back.ts += uint32_t(16 + random_ts(random_engine)),
+				{
+					zero_attractor(back.acc[0], attractor.first[0]),
+					zero_attractor(back.acc[1], attractor.first[1]),
+					zero_attractor(back.acc[2], attractor.first[2]),
+				},
+				{
+					zero_attractor(back.gyro[0], attractor.second[0]),
+					zero_attractor(back.gyro[1], attractor.second[1]),
+					zero_attractor(back.gyro[2], attractor.second[2]),
+				},
+			};
+			return back;
+		};
+		for (auto sam = 0; sam < to_add; ++sam) {
+			test_data.emplace_back(new_data_gen());
 
-	float history = 10.f;
-	bool history_limited = true;
-	float yscale = float(std::numeric_limits<int16_t>::max());
-	bool scale_limited = true;
-	void show() {
-		ImGui::Begin("sample data", &sample_data);
-		if (sample_data) {
-			ImGui::SliderFloat("History", &history, 1, 30, "%.1f s");
-			ImGui::SameLine();
-			ImGui::Checkbox("lock x", &history_limited);
-
-			ImGui::SliderFloat("Scale", &yscale, 1,
-							   std::numeric_limits<int16_t>::max(),
-							   "%.1f leandri");
-			ImGui::SameLine();
-			ImGui::Checkbox("lock y", &scale_limited);
-
-			const auto &[last_t, last_acc, last_gyro] = test_data.back();
-
-			if (history_limited) {
-				ImPlot::SetNextPlotLimitsX(last_t / 1000. - history,
-										   last_t / 1000., ImGuiCond_Always);
+			const auto &gyr = test_data.back().gyro;
+			const auto dt = test_data.back().ts - (test_data.end() - 2)->ts;
+			for (auto i = 0u; i < gyr.size(); ++i) {
+				dir[i] = std::remainder(
+					dir[i] + to_radians(to_increment(
+								 to_degs_per_sec(gyr[i], 245), dt)),
+					std::numbers::pi_v<float>);
 			}
-
-			if (scale_limited) {
-				ImPlot::SetNextPlotLimitsY(-yscale * 1.1, yscale * 1.1,
-										   ImGuiCond_Always);
-			}
-			if (ImPlot::BeginPlot("imu", "s", "leandri", ImVec2(-1, -1))) {
-				ImPlot::PlotLineG("acc_x", getter([](const imu &im) {
-									  return ImPlotPoint(im.ts / 1000.,
-														 im.acc[0]);
-								  }),
-								  test_data.data(), int(test_data.size()));
-				ImPlot::PlotLineG("acc_y", getter([](const imu &im) {
-									  return ImPlotPoint(im.ts / 1000.,
-														 im.acc[1]);
-								  }),
-								  test_data.data(), int(test_data.size()));
-				ImPlot::PlotLineG("acc_z", getter([](const imu &im) {
-									  return ImPlotPoint(im.ts / 1000.,
-														 im.acc[2]);
-								  }),
-								  test_data.data(), int(test_data.size()));
-				ImPlot::EndPlot();
-			}
-
-			ImGui::End();
 		}
 	}
 };
 
+constexpr auto office = DegPos{41.9134432f, 12.5010377f};
+struct sample_gps {
+	std::default_random_engine random_engine{std::random_device{}()};
+	std::uniform_real_distribution<float> random_acc{-1 / 10'000.f,
+													 1 / 10'000.f};
+
+	lclock test_data_clock{};
+	std::vector<DegPos> test_data{1, office};
+	std::array<float, 2> bb_y = [] {
+		auto a = MercatorePos(office);
+		return std::array{a.y - 0.00001f, a.y + 0.00001f};
+	}();
+	std::array<float, 2> bb_x = [] {
+		auto a = MercatorePos(office);
+		return std::array{a.x - 0.00001f, a.x + 0.00001f};
+	}();
+	void update() {
+		const auto to_add = [&] {
+			const auto expected =
+				std::floor(test_data_clock.getElapsedTime().asSeconds());
+			return int(expected - float(test_data.size()));
+		}();
+		if (to_add <= 0) {
+			return;
+		}
+
+		for (auto i = 0; i < to_add; ++i) {
+			auto stp = test_data.back();
+			stp.lat += random_acc(random_engine);
+			stp.lon += random_acc(random_engine);
+			auto mer = MercatorePos(stp);
+			bb_x[0] = std::min(bb_x[0], mer.x);
+			bb_x[1] = std::max(bb_x[1], mer.x);
+			bb_y[0] = std::min(bb_y[0], mer.y);
+			bb_y[1] = std::max(bb_y[1], mer.y);
+			test_data.emplace_back(stp);
+		}
+	}
+};
+
+struct data_adapter {
+	std::string label;
+	std::function<void()> update;
+	std::function<std::pair<std::span<const imu>, std::span<const float, 3>>()>
+		get_imu;
+	std::function<std::span<const DegPos>()> get_gps;
+};
+
+struct device_samples {
+	std::vector<imu> imu_samples{};
+	std::array<float, 3> imu_direction{};
+	std::vector<DegPos> gps_samples{};
+	std::string label;
+	data_source src;
+	device_samples(open_port &&p)
+		: label{fmt::format(FMT_COMPILE("{}-{}"), p.name(), p.description())},
+		  src{line_getter(std::move(p))} {}
+
+	void update_direction(const imu &im, uint32_t dt) {
+		for (auto i = 0u; i < im.gyro.size(); ++i) {
+			imu_direction[i] = std::remainder(
+				imu_direction[i] + to_radians(to_increment(
+									   to_degs_per_sec(im.gyro[i], 245), dt)),
+				std::numbers::pi_v<float>);
+		}
+	}
+	void update() {
+		auto sample = src();
+		if (!sample) {
+			return;
+		}
+		if (std::holds_alternative<imu>(*sample)) {
+			imu_samples.emplace_back(std::get<imu>(*sample));
+			return;
+		}
+
+		if (std::holds_alternative<gps_hybrid>(*sample)) {
+			gps_samples.emplace_back(DegPos(std::get<gps_hybrid>(*sample).pos));
+		}
+	}
+};
 int main() {
 	spdlog::cfg::load_env_levels();
 
-	auto ports = get_ports();
-	fmt::print("ports: {}\n", ports | std::views::transform([](auto &p) {
-								  return std::pair{p.name(), p.description()};
-							  }));
-
+	{
+		auto ports = get_ports();
+		fmt::print("ports: {}\n",
+				   ports | std::views::transform([](auto &p) {
+					   return std::pair{p.name(), p.description()};
+				   }));
+	}
 	glfwSetErrorCallback([](int e, auto str) {
 		spdlog::error("glfw err: {} - {}", e, str);
 		exit(1);
@@ -497,6 +491,48 @@ int main() {
 	ImGui_ImplOpenGL3_Init(glsl_version);
 
 	const auto clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+	int source_item = 0;
+	sample_data sample{};
+	sample_gps sample_pos{};
+
+	auto sources = std::vector<data_adapter>{
+		{
+			sample.label,
+			[&] {
+				sample.update();
+				sample_pos.update();
+			},
+			[&]()
+				-> std::pair<std::span<const imu>, std::span<const float, 3>> {
+				return {sample.test_data, sample.dir};
+			},
+			[&]() -> std::span<const DegPos> { return sample_pos.test_data; },
+		},
+	};
+	auto devices = [] {
+		auto ports_p = get_ports();
+		auto dev_v = ports_p | std::views::transform([](port &p) {
+						 return device_samples{std::move(
+							 std::move(p).open().set_config({230800}))};
+						 ;
+					 });
+		return std::vector<device_samples>{dev_v.begin(), dev_v.end()};
+	}();
+	std::ranges::copy(
+		devices | std::views::transform([](auto &dev) {
+			return data_adapter{
+				dev.label, [&] { dev.update(); },
+				[&]() -> std::pair<std::span<const imu>,
+								   std::span<const float, 3>> {
+					return {dev.imu_samples, dev.imu_direction};
+				},
+				[&]() -> std::span<const DegPos> { return dev.gps_samples; }};
+		}),
+		std::back_insert_iterator(sources));
+	acc_plot acc{};
+	gyro_plot gyro{};
+
 	// Main loop
 	while (!glfwWindowShouldClose(window)) {
 
@@ -516,21 +552,57 @@ int main() {
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		static auto sample_data = true;
-		static struct sample_data sample {};
-
-		if (sample_data) {
-			sample.update();
-		}
-
 		static auto clear_bg = true;
 		ImGui::Checkbox("clear_bg", &clear_bg);
 		ImGui::Text("%d fps", int(std::floor(io.Framerate)));
-		ImGui::Checkbox("sample data", &sample_data);
+		ImGui::Combo(
+			"source", &source_item,
+			[](void *data, int idx, const char **outstr) -> bool {
+				auto &src = *static_cast<decltype(sources) *>(data);
+				*outstr = src[size_t(idx)].label.c_str();
+				return true;
+			},
+			&sources, int(sources.size()));
 
-		if (sample_data) {
-			sample.show();
+		sources[size_t(source_item)].update();
+
+		if (ImGui::Begin("Position")) {
+			auto pos = sources[size_t(source_item)].get_gps();
+
+			/*
+			 * ImPlot::SetNextPlotLimitsX(sample_pos.bb_x[0],
+			 * sample_pos.bb_x[1], ImGuiCond_Appearing);
+			 * ImPlot::SetNextPlotLimitsY(sample_pos.bb_y[0],
+			 * sample_pos.bb_y[1], ImGuiCond_Appearing);
+			 */
+			if (ImPlot::BeginPlot("pos - mercatore", "longitude", "latitude",
+								  ImVec2(400, 400))) {
+
+				ImPlot::PlotLineG(
+					"trace", getter([](const DegPos &p) -> ImPlotPoint {
+						auto e = MercatorePos(p);
+						return {e.x, e.y};
+					}),
+					const_cast<DegPos *>(pos.data()), int(pos.size()));
+				ImPlot::EndPlot();
+			}
 		}
+		ImGui::End();
+
+		if (ImGui::Begin("instruments")) {
+			auto [data_imu, data_dir] = sources[size_t(source_item)].get_imu();
+			if (data_imu.size() > 0) {
+				if (ImGui::TreeNode("acc")) {
+					acc.show(data_imu);
+					ImGui::TreePop();
+				}
+				if (ImGui::TreeNode("gyro")) {
+					gyro.show(data_imu, data_dir);
+					ImGui::TreePop();
+				}
+			}
+		}
+		ImGui::End();
 
 		ImGui::Render();
 		int display_w, display_h;
@@ -556,23 +628,4 @@ int main() {
 
 	glfwDestroyWindow(window);
 	glfwTerminate();
-
-	if (ports.size() == 0) {
-		return -1;
-	}
-	auto lines_gen =
-		line_spliter{std::move(ports[0]).open().set_config({230800})};
-
-	std::queue<std::string> lines{};
-
-	auto processed = size_t(0);
-	while (processed < 1000) {
-		lines_gen(lines);
-		processed += lines.size();
-		while (!lines.empty()) {
-			fmt::print("{} {}\n", is_imu(lines.front()) ? "III" : "___",
-					   lines.front());
-			lines.pop();
-		}
-	}
 }

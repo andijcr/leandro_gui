@@ -194,17 +194,25 @@ if(libserialport_ADDED)
 
 
     if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-        target_sources(serialport PUBLIC ${LSER}/linux.c ${LSER}/linux_termios.c)
+        target_sources(serialport PRIVATE ${LSER}/linux.c ${LSER}/linux_termios.c)
     elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-        target_sources(serialport PUBLIC ${LSER}/windows.c)
+        target_sources(serialport PRIVATE ${LSER}/windows.c)
         target_link_libraries(serialport PUBLIC Setupapi)
-    elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    elseif(${CMAKE_SYSTEM_NAME} PRIVATE "Darwin")
         target_sources(serialport PUBLIC ${LSER}/macosx.c)
     endif()
 
 endif()
 
-add_executable(leandro_gui main.cpp)
+add_executable(leandro_gui
+    leo_widgets.cpp
+    leo_widgets.hpp
+    imu.cpp
+    imu.hpp
+    gps.hpp
+    gps.cpp
+    main.cpp
+    )
 target_link_libraries(leandro_gui PUBLIC
     project_options
     project_warnings
