@@ -243,6 +243,8 @@ struct data_source {
 		if (!line) {
 			return {};
 		}
+
+		spdlog::debug("line: {}", *line);
 		if (is_imu(*line)) {
 			return to_imu(*line);
 		}
@@ -422,12 +424,14 @@ struct device_samples {
 				std::numbers::pi_v<float>);
 		}
 	}
+
 	void update() {
 		auto sample = src();
 		if (!sample) {
 			return;
 		}
 		if (std::holds_alternative<imu>(*sample)) {
+			update_direction(std::get<imu>(*sample), 17);
 			imu_samples.emplace_back(std::get<imu>(*sample));
 			return;
 		}
@@ -569,12 +573,11 @@ int main() {
 		if (ImGui::Begin("Position")) {
 			auto pos = sources[size_t(source_item)].get_gps();
 
-			/*
-			 * ImPlot::SetNextPlotLimitsX(sample_pos.bb_x[0],
-			 * sample_pos.bb_x[1], ImGuiCond_Appearing);
-			 * ImPlot::SetNextPlotLimitsY(sample_pos.bb_y[0],
-			 * sample_pos.bb_y[1], ImGuiCond_Appearing);
-			 */
+			ImPlot::SetNextPlotLimitsX(sample_pos.bb_x[0], sample_pos.bb_x[1],
+									   ImGuiCond_Appearing);
+			ImPlot::SetNextPlotLimitsY(sample_pos.bb_y[0], sample_pos.bb_y[1],
+									   ImGuiCond_Appearing);
+
 			if (ImPlot::BeginPlot("pos - mercatore", "longitude", "latitude",
 								  ImVec2(400, 400))) {
 
