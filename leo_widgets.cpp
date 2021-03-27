@@ -60,14 +60,15 @@ auto make_trace(const char *name, auto getter) {
 	return plot_trace<decltype(getter)>{name};
 }
 
-template <typename G>
-auto plotline(std::span<const imu> data, const plot_trace<G> &trace) {
-	ImPlot::PlotLineG(trace.name, G{}, const_cast<imu *>(data.data()),
+template <typename G, typename T>
+auto plotline(std::span<const T> data, const plot_trace<G> &trace) {
+	ImPlot::PlotLineG(trace.name, G{}, const_cast<T *>(data.data()),
 					  int(data.size()));
 }
 
-void show_lplot(l_plot &plot_data, const char *yunits,
-				std::span<const imu> data, auto... traces) {
+template <typename T, typename... TR>
+void show_lplot(l_plot &plot_data, const char *yunits, double time,
+				std::span<const T> data, TR... traces) {
 	ImGui::SetNextWindowSize(ImVec2(600, 600), ImGuiCond_FirstUseEver);
 	ImGui::Checkbox("lock##hist", &plot_data.history_limited);
 	if (plot_data.history_limited) {
@@ -81,25 +82,40 @@ void show_lplot(l_plot &plot_data, const char *yunits,
 		ImGui::SliderFloat("Scale", &plot_data.yscale, 1,
 						   std::numeric_limits<int16_t>::max(), "%.1f");
 	}
-	if (data.size() > 0) {
-		const auto &[last_t, last_acc, last_gyro] = data.back();
+	if (plot_data.history_limited) {
+		ImPlot::SetNextPlotLimitsX(time - double(plot_data.history), time,
+								   ImGuiCond_Always);
+	}
 
-		if (plot_data.history_limited) {
-			ImPlot::SetNextPlotLimitsX(last_t / 1000. -
-										   double(plot_data.history),
-									   last_t / 1000., ImGuiCond_Always);
-		}
-
-		if (plot_data.scale_limited) {
-			ImPlot::SetNextPlotLimitsY(-double(plot_data.yscale) * 1.1,
-									   double(plot_data.yscale) * 1.1,
-									   ImGuiCond_Always);
-		}
+	if (plot_data.scale_limited) {
+		ImPlot::SetNextPlotLimitsY(-double(plot_data.yscale) * 1.1,
+								   double(plot_data.yscale) * 1.1,
+								   ImGuiCond_Always);
 	}
 	if (ImPlot::BeginPlot("", "s", yunits, ImVec2(-1, 400))) {
 		(plotline(data, traces), ...);
 		ImPlot::EndPlot();
 	}
+}
+
+static auto last_ts(std::span<const imu> data) {
+	if (data.size() > 0) {
+		return data.back().ts / 1000.;
+	}
+	return 0.;
+}
+static auto last_ts(std::span<const acc_plot::sample> data) {
+	if (data.size() > 0) {
+		return float(data.back().ts);
+	}
+	return 0.f;
+}
+
+static auto last_ts(std::span<const gyro_plot::sample> data) {
+	if (data.size() > 0) {
+		return float(data.back().ts);
+	}
+	return 0.f;
 }
 
 void gyro_plot::show(std::span<const imu> data, std::span<const float, 3> dir) {
@@ -108,7 +124,7 @@ void gyro_plot::show(std::span<const imu> data, std::span<const float, 3> dir) {
 	plot_direction("y", dir[1]);
 	ImGui::SameLine();
 	plot_direction("z", dir[2]);
-	show_lplot(plt, "nesi", data,
+	show_lplot(plt, "nesi", last_ts(data), data,
 			   make_trace("x", getter([](const imu &im) {
 							  return ImPlotPoint(im.ts / 1000., im.gyro[0]);
 						  })),
@@ -118,11 +134,42 @@ void gyro_plot::show(std::span<const imu> data, std::span<const float, 3> dir) {
 			   make_trace("z", getter([](const imu &im) {
 							  return ImPlotPoint(im.ts / 1000., im.gyro[2]);
 						  })));
-	ImGui::End();
+}
+
+void gyro_plot::show(std::span<const sample> data,
+					 std::span<const float, 3> dir) {
+	plot_direction("x", dir[0]);
+	ImGui::SameLine();
+	plot_direction("y", dir[1]);
+	ImGui::SameLine();
+	plot_direction("z", dir[2]);
+	show_lplot(plt, "nesi", last_ts(data), data,
+			   make_trace("x", getter([](const sample &im) {
+							  return ImPlotPoint{im.ts, im.values[0]};
+						  })),
+			   make_trace("y", getter([](const sample &im) {
+							  return ImPlotPoint{im.ts, im.values[1]};
+						  })),
+			   make_trace("z", getter([](const sample &im) {
+							  return ImPlotPoint{im.ts, im.values[2]};
+						  })));
+}
+
+void acc_plot::show(std::span<const sample> d) {
+	show_lplot(plt, "leandri", last_ts(d), d,
+			   make_trace("x", getter([](const acc_plot::sample &dt) {
+							  return ImPlotPoint{dt.ts, dt.values[0]};
+						  })),
+			   make_trace("y", getter([](const acc_plot::sample &dt) {
+							  return ImPlotPoint{dt.ts, dt.values[1]};
+						  })),
+			   make_trace("z", getter([](const acc_plot::sample &dt) {
+							  return ImPlotPoint{dt.ts, dt.values[2]};
+						  })));
 }
 
 void acc_plot::show(std::span<const imu> data) {
-	show_lplot(plt, "leandri", data,
+	show_lplot(plt, "leandri", last_ts(data), data,
 			   make_trace("x", getter([](const imu &im) {
 							  return ImPlotPoint(im.ts / 1000., im.acc[0]);
 						  })),

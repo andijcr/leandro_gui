@@ -142,15 +142,18 @@ bool is_gps_hybrid(std::string_view sv) {
 }
 
 auto to_gps_hybrid(std::string_view sv) -> gps_hybrid {
-	constexpr auto to_num = [](auto strnum) {
+	constexpr auto to_num = [](std::string_view strnum) {
 		int64_t res = 0;
-		std::from_chars(strnum.begin(), strnum.end(), res);
+		std::from_chars(strnum.data(), strnum.data() + strnum.size(), res);
 		return res;
 	};
 	auto colums =
 		sv | std::views::split(';') | std::views::transform([](auto &&rng) {
-			return std::string_view(&*rng.begin(),
-									size_t(std::ranges::distance(rng)));
+			auto base = std::string_view(&*rng.begin(),
+										 size_t(std::ranges::distance(rng)));
+			base.remove_prefix(
+				std::min(base.find_first_not_of(" "), base.size()));
+			return base;
 		});
 
 	auto col = colums.begin();

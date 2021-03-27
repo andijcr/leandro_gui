@@ -37,6 +37,12 @@ option(BUILD_SHARED_LIBS "Enable compilation of shared libraries" OFF)
 option(ENABLE_TESTING "Enable Test Builds" ON)
 option(ENABLE_FUZZING "Enable Fuzzing Builds" OFF)
 
+option(USE_PROFILING "" OFF)
+if(USE_PROFILING)
+    target_compile_options(project_options INTERFACE -pg)
+    target_link_libraries(project_options INTERFACE -pg)
+endif()
+
 # Very basic PCH example
 option(ENABLE_PCH "Enable Precompiled Headers" OFF)
 if(ENABLE_PCH)
@@ -205,6 +211,8 @@ if(libserialport_ADDED)
 endif()
 
 add_executable(leandro_gui
+    mock_device.cpp
+    mock_device.hpp
     leo_widgets.cpp
     leo_widgets.hpp
     imu.cpp

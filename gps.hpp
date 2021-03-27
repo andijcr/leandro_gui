@@ -1,6 +1,20 @@
 #pragma once
 #include <cstdint>
+#include <limits>
+#include <numbers>
 #include <string_view>
+
+constexpr auto to_degs_per_sec(int16_t gyr_point, float fullscale) {
+	return fullscale * float(gyr_point) /
+		   -float(std::numeric_limits<int16_t>::min());
+}
+constexpr auto to_increment(float degs_per_sec, float period) {
+	return degs_per_sec * period;
+}
+
+constexpr auto to_radians(float degs) {
+	return (degs / 180.f) * std::numbers::pi_v<float>;
+}
 
 enum class lat_dir { N = 1, S = -1 };
 enum class lon_dir { E = 1, W = -1 };

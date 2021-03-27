@@ -1,4 +1,6 @@
 #include "imu.hpp"
+#include "magic_enum.hpp"
+#include "spdlog/spdlog.h"
 #include <algorithm>
 #include <charconv>
 #include <ranges>
@@ -28,18 +30,27 @@ auto is_imu(std::string_view sv) -> bool {
 }
 
 imu to_imu(std::string_view sv) {
+	spdlog::debug("to_imu: '{}'", sv);
 	auto colums =
 		sv | std::views::split(';') | std::views::transform([](auto &&rng) {
-			return std::string_view(&*rng.begin(),
-									size_t(std::ranges::distance(rng)));
+			auto base = std::string_view(&*rng.begin(),
+										 size_t(std::ranges::distance(rng)));
+			base.remove_prefix(
+				std::min(base.find_first_not_of(" "), base.size()));
+			return base;
 		});
 
-	auto nums =
-		colums | std::views::drop(1) | std::views::transform([](auto strnum) {
-			int64_t res;
-			std::from_chars(strnum.begin(), strnum.end(), res);
-			return res;
-		});
+	auto nums = colums | std::views::drop(1) |
+				std::views::transform([](std::string_view strnum) {
+					int64_t res{};
+					auto [_, e] = std::from_chars(
+						strnum.data(), strnum.data() + strnum.size(), res);
+					if (e != std::errc{}) {
+						spdlog::warn("to_imu({}): {}", strnum,
+									 magic_enum::enum_name(e));
+					}
+					return res;
+				});
 
 	auto it = nums.begin();
 	auto ts = *it;

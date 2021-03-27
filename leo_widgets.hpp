@@ -26,11 +26,21 @@ struct l_plot {
 };
 
 struct gyro_plot {
+	struct sample {
+		float ts;
+		std::array<float, 3> values;
+	};
 	l_plot plt{};
 	void show(std::span<const imu> data, std::span<const float, 3> dir);
+	void show(std::span<const sample> data, std::span<const float, 3> dir);
 };
 
 struct acc_plot {
+	struct sample {
+		float ts;
+		std::array<float, 3> values;
+	};
 	l_plot plt{};
 	void show(std::span<const imu> data);
+	void show(std::span<const sample> d);
 };
